@@ -1,0 +1,203 @@
+#include <msp430.h>
+#include <libTimer.h>
+#include "lcdutils.h"
+#include "lcddraw.h"
+#include "buzzer.h"
+
+#define LED BIT6
+#define SW1 1
+#define SW2 2
+#define SW3 4
+#define SW4 8
+#define SWITCHES 15
+
+// Define colors
+u_int colorChange = COLOR_BLACK;
+
+// Function to update switch interrupt sense
+static char switch_update_interrupt_sense(){
+  char p2val = P2IN;
+  P2IES |= (p2val & SWITCHES);
+  P2IES &= (p2val | ~SWITCHES);
+  return p2val;
+}
+
+// Function to initialize switches
+void switch_init(){
+  P2REN |= SWITCHES;
+  P2IN |= SWITCHES;
+  P2OUT |= SWITCHES;
+  P2DIR &= ~SWITCHES;
+  switch_update_interrupt_sense();
+}
+
+// Switch interrupt handler
+void switch_interrupt_handler(){
+  char p2val = switch_update_interrupt_sense();
+  // Define 'switches' here or globally
+  switches = ~p2val & SWITCHES;
+}
+
+// Array and variables for cat's position and movement
+short drawPos[2] = {1, 1}, controlPos[2] = {2, 2};
+short colVelocity = 1, colLimits[2] = {1, screenWidth/2};
+short colLimits_2[2] = {1, screenHeight/2};
+
+// Function to draw cat
+void draw_kitty_cat(int x, int y, u_int color){
+  fillCircle(x, y, 15, color);
+  fillCircle(x - 7, y + 5, 3, color);
+  fillCircle(x + 7, y + 5, 3, color);
+  fillCircle(x - 5, y - 2, 2, COLOR_BLACK);
+  fillCircle(x + 5, y - 2, 2, COLOR_BLACK);
+  drawLine(x - 2, y + 3, x + 2, y + 3, COLOR_BLACK);
+  drawArc(x, y + 5, 7, 180, 360, 2, COLOR_BLACK);
+}
+
+// Function to update cat's position on screen
+void screen_update_kitty_cat(){
+  for (char axis = 0; axis < 2; axis++)
+    if (drawPos[axis] != controlPos[axis])
+      goto redraw;
+  return;
+ redraw:
+  draw_kitty_cat(drawPos[0], drawPos[1], COLOR_BLUE);
+  for (char axis = 0; axis < 2; axis++)
+    drawPos[axis] = controlPos[axis];
+  draw_kitty_cat(drawPos[0], drawPos[1], colorChange);
+}
+
+// State machine changes every second, for songs
+int change_state = 0;
+#define STATE_MAX 8
+
+// Song functions
+int  song_one(){
+  switch(change_state){
+    case 0:
+      buzzer_set_period(300);
+      break;
+    case 1:
+      buzzer_set_period(400);
+      break;
+    case 2:
+      buzzer_set_period(500);
+      break;
+    case 3:
+      buzzer_set_period(600);
+      break;
+    case 4:
+      buzzer_set_period(700);
+      break;
+    case 5:
+      buzzer_set_period(800);
+      break;
+    case 6:
+      buzzer_set_period(900);
+      break;
+    case 7:
+      buzzer_set_period(1000);
+      break;
+  }
+}
+
+// Function to update the state every second
+int sec(){
+  change_state+++;
+  if (change_state >= STATE_MAX){
+    change_state = 0;
+  }
+}
+
+// Function to handle interrupt
+void dwt_c_handler(){
+  char p2val = switch_update_interrupt_sense();
+  switches = ~p2val & SWITCHES;
+  short oldCol_x = controlPos[0];
+  short oldCol_y = controlPos[1];
+  static int sec_count = 0;
+  sec_count++;
+  if (sec_count == 100){
+    sec_count = 0;
+    sec();
+  }
+
+  if (switches & SW4){
+    colorChange = COLOR_LIGHT_PINK;
+    changeSong = 4;
+    short newCol = oldCol_x + colVelocity;
+    if (!(newCol <= colLimits[0]) || !(newCol >= colLimits[1])){
+      redrawScreen = 1;
+      controlPos[0] = newCol;
+    }
+  }
+
+  if (switches & SW2){
+    colorChange = COLOR_LIGHT_BLUE;
+    changeSong = 7;
+    short newCol = oldCol_y + colVelocity;
+    redrawScreen = 1;
+    controlPos[1] = newCol;
+  }
+
+  if (switches & SW1){
+    colorChange = COLOR_SEA_GREEN;
+    changeSong = 8;
+    short newCol = oldCol_y - colVelocity;
+    if (!(newCol <= colLimits_2[0] || !(newCol >= colLimits_2[1])){
+	redrawScreen = 1;
+	controlPos[1] = newCol;
+    }
+  }
+}
+
+// Main function
+void main(){
+  P1DIR |= LED;
+  P1OUT |= LED;
+  configureClock();
+  lcd_init();
+  switch_init();
+  buzzer_init();
+  enableWDTInterrupts();
+  or_sr(0x8);
+  clearScreen(COLOR_BLUE);
+
+  while (1){
+    if (redrawScreen){
+      redrawScreen = 0;
+      screen_update_kitty_cat();
+    }
+    switch(changeSong){
+      case 1:
+	song_one();
+	break;
+      case 2:
+	song_two();
+	break;
+      case 3:
+	song_three();
+	break;
+      case 4:
+	song_four();
+	break;
+      case 5:
+	song_five();
+	break;
+    }
+    P1OUT &= ~LED;
+    or_sr(0x10);
+    P1OUT |= LED;
+  }
+}
+
+void update_kitty_cat(){
+  screen_update_kitty_cat();
+}
+
+void __interrupt_vec(PORT2_VECTOR) Port_2(){
+  if (P2IFG & SWITCHES){
+    P2IFG &= SWITCHES;
+    switch_interrupt_handler();
+  }
+} 
