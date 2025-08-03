@@ -14,3 +14,8 @@ void buzer_set_period(short cycles){
   CCR0 = cycles;
   CCR1 = cycles >> 1;
 }
+
+void buzzer_stop(){
+  CCR0 = 0;
+  CCR1 = 0;
+}
